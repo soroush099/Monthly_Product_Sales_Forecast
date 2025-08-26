@@ -143,6 +143,9 @@ monthly-product-sales-forecast/
 ├── tests/
 │   └── test_pipeline.py      # تست‌های یکپارچگی برای اطمینان از صحت پایپ‌لاین
 │
+├── main.py
+│
 └── requirements.txt            # لیست کتابخانه‌های مورد نیاز پروژه
 ```
+
 
