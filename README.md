@@ -133,9 +133,10 @@ monthly-product-sales-forecast/
 │   ├── features/
 │   │   └── feature_engineering.py # ماژول ساخت ویژگی‌های جدید
 │   ├── models/
-│   │   ├── model_training.py # اسکریپت آموزش و ارزیابی مدل
+│   │   ├── model_training.py # اسکریپت آموزش مدل
 │   │   └── forecasting.py    # اسکریپت اجرای پیش‌بینی روی داده جدید
 │   ├── utils/
+│   │   ├── evaluation.py     # اسکریپت ارزیابی مدل
 │   │   └── helpers.py        # توابع کمکی و عمومی مورد استفاده در پروژه
 │   └── visualization/
 │       └── plots.py          # ماژول تولید نمودارها و گزارشات تصویری
@@ -147,5 +148,6 @@ monthly-product-sales-forecast/
 │
 └── requirements.txt            # لیست کتابخانه‌های مورد نیاز پروژه
 ```
+
 
 
