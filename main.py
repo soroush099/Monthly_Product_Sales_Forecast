@@ -4,6 +4,7 @@ from src.data.data_loader import load_data
 from src.features.feature_engineering import create_features
 from src.models.model_training import train_model
 from src.models.forecasting import forecast_future
+from src.utils.auxiliary_comparison_chart import plot_results_comparison
 from src.visualization.plots import plot_results
 
 # Data file path
@@ -33,8 +34,7 @@ os.makedirs("reports", exist_ok=True)
 df_predictions_pivoted.to_csv("reports/seasonal_forecast_results.csv")
 
 # Drawing a diagram
-user_code_list = [12704, 16629, 17292, 17732, 18616]
 predicted_codes = df_predictions_pivoted.index.get_level_values('Code').unique()
-codes_to_plot = [code for code in user_code_list if code in predicted_codes]
-
-plot_results(data, df_predictions_pivoted, codes_to_plot, output_dir)
+codes_to_plot = predicted_codes.tolist()
+for code in codes_to_plot:
+    plot_results(data, df_predictions_pivoted, [code], output_dir)
