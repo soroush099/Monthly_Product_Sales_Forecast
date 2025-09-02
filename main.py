@@ -29,7 +29,7 @@ future_dates_df = pd.DataFrame({'Year': [1404] * 8, 'Month': [5, 6, 7, 8, 9, 10,
 results_df = forecast_future(model, le, data, features, future_dates_df)
 
 # Save results
-df_predictions_pivoted = results_df.pivot_table(index=['Code','Model'], columns='Month', values='Predicted_Sales')
+df_predictions_pivoted = results_df.pivot_table(index=['Code', 'Model'], columns='Month', values='Predicted_Sales')
 os.makedirs("reports", exist_ok=True)
 df_predictions_pivoted.to_csv("reports/seasonal_forecast_results.csv")
 
