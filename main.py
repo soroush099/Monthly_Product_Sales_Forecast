@@ -15,7 +15,7 @@ output_dir = "reports/figures"
 data = load_data(data_path)
 
 # Feature Engineering
-df, le = create_features(data)
+df, le = create_features(data, max_lag=24)
 
 # Model training
 features = ['Code_Encoded', 'Year', 'Month',
