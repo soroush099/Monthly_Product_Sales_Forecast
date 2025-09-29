@@ -4,7 +4,9 @@ import jdatetime
 from sklearn.preprocessing import LabelEncoder
 
 
-def create_features(data: pd.DataFrame, max_lag=12, rolling_windows=[3, 6, 12]):
+def create_features(data: pd.DataFrame, max_lag=12, rolling_windows=None):
+    if rolling_windows is None:
+        rolling_windows = [3, 6, 12]
     df = data.copy()
 
     def shamsi_to_gregorian(row):
@@ -45,8 +47,10 @@ def create_features(data: pd.DataFrame, max_lag=12, rolling_windows=[3, 6, 12]):
 
 
 def create_features_for_prediction(history_data, code, le, future_year, future_month,
-                                   max_lag=24, rolling_windows=[3, 6, 12]):
+                                   max_lag=24, rolling_windows=None):
 
+    if rolling_windows is None:
+        rolling_windows = [3, 6, 12]
     future_date = jdatetime.date(int(future_year), int(future_month), 1).togregorian()
     future_date = pd.to_datetime(future_date)
 
