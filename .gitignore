@@ -1,3 +1,4 @@
 *.csv
 reports/
 __pycache__/
+logs/
