@@ -2,13 +2,15 @@ import pandas as pd
 import numpy as np
 import jdatetime
 from sklearn.preprocessing import LabelEncoder
+from ..utils.jalali_utils import gregorian_to_jalali, get_jalali_season
 
 
 def create_features(data: pd.DataFrame, max_lag=12, rolling_windows=None):
     if rolling_windows is None:
-        rolling_windows = [3, 6, 12]
+        rolling_windows = [3, 6, 9,  12]
     df = data.copy()
 
+    # دیگه نیازی به تبدیل تاریخ به شمسی نیست.
     def shamsi_to_gregorian(row):
         return jdatetime.date(row['Year'], row['Month'], 1).togregorian()
     df['Date'] = df.apply(shamsi_to_gregorian, axis=1)

@@ -5,6 +5,7 @@ from src.features.feature_engineering import create_features
 from src.models.model_training import (train_model_random_forest_regressor)
 from src.models.forecasting import forecast_future
 from src.utils.auxiliary_comparison_chart import plot_results_comparison
+from src.utils.jalali_utils import gregorian_to_jalali
 
 data_path = "data/MonthlySales_TopGoods_500_ByCode_And_Name.csv"
 external_data_path = "data/sample_new_data.csv"
@@ -19,9 +20,13 @@ print("\n📊 Loading data...")
 data = load_data(data_path)
 print(f"✓ Number of records: {len(data):,}")
 print(f"✓ Number of unique codes: {data['Code'].nunique()}")
+
+# Convert date range to Jalali
+start_year, start_month = gregorian_to_jalali(data['Year'].min(), data['Month'].min())
+end_year, end_month = gregorian_to_jalali(data['Year'].max(), data['Month'].max())
 print(
-    f"✓ Time range: Year {data['Year'].min()} "
-    f"Month {data['Month'].min()} to Year {data['Year'].max()} Month {data['Month'].max()}")
+    f"✓ Time range (Jalali): Year {start_year} "
+    f"Month {start_month} to Year {end_year} Month {end_month}")
 
 if os.path.exists(external_data_path):
     print(f"✓ External data file found: {external_data_path}")
@@ -37,13 +42,14 @@ feature_cols = [col for col in df.columns if col not in ['MainQty', 'Name', 'Dat
 x_train = df[feature_cols]
 y_train = df['MainQty']
 
-print(f"\n🤖 Training XGBoost model...")
+print(f"\n🤖 Training XGBoost model with regularization...")
 model = train_model_random_forest_regressor(x_train, y_train)
 print("✓ Model successfully trained!")
 
+# Update future dates to Jalali
 future_dates_df = pd.DataFrame({
-    'Year': [1404] * 8,
-    'Month': [5, 6, 7, 8, 9, 10, 11, 12]
+    'Year': [1404] * 8,  # Already in Jalali
+    'Month': [5, 6, 7, 8, 9, 10, 11, 12]  # Already in Jalali
 })
 
 print(f"\n🔮 Forecasting for {len(future_dates_df)} future months...")
