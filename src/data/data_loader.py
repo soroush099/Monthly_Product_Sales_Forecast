@@ -156,7 +156,7 @@ class SalesDataProcessor:
 
             if len(values) < self.n_lags:
                 values = np.pad(values, (self.n_lags - len(values), 0),
-                                mode='constant', constant_values=np.nan)
+                                mode='constant', constant_values=0)
 
             row = {'Code': code}
 
