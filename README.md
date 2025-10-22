@@ -130,12 +130,17 @@ monthly-product-sales-forecast/
 ├── src/                      # سورس کدهای اصلی پروژه
 │   ├── data/
 │   │   └── data_loader.py    # ماژول بارگذاری و آماده‌سازی اولیه داده
+│   ├── config/
+│   │   └── base_config.py
 │   ├── features/
 │   │   └── feature_engineering.py # ماژول ساخت ویژگی‌های جدید
 │   ├── models/
-│   │   ├── model_training.py # اسکریپت آموزش و ارزیابی مدل
+│   │   ├── evaluation.py     # اسکریپت ارزیابی مدل
+│   │   ├── model_training.py # اسکریپت آموزش مدل
 │   │   └── forecasting.py    # اسکریپت اجرای پیش‌بینی روی داده جدید
 │   ├── utils/
+│   │   ├── auxiliary_comparison_chart.py
+│   │   ├── jalali_utils.py
 │   │   └── helpers.py        # توابع کمکی و عمومی مورد استفاده در پروژه
 │   └── visualization/
 │       └── plots.py          # ماژول تولید نمودارها و گزارشات تصویری
