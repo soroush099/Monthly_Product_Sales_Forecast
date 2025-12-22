@@ -30,24 +30,8 @@
 
 - **XGBoost Regressor** برای مدل‌سازی
 - **Time Series Features** شامل Lag و Rolling
-- **Streamlit Dashboard** برای نمایش تعاملی
+- **Streamlit Dashboard** برای نمایش تعاملی توسعه یافته است.
 
-توسعه یافته است.
-
-### 🔄 جریان کار (Pipeline)
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│ Data Loader │───▶│ Feature │───▶│ Model │───▶│ Forecasting │
-│ │ │ Engineering │ │ Training │ │ │
-└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
-│
-┌─────────────┐ ┌─────────────┐ │
-│ Plots │◀───│ Evaluation │◀──────────┘
-└─────────────┘ └─────────────┘
-
-text
-
-
----
 
 ## ✨ ویژگی‌ها
 
@@ -66,68 +50,96 @@ text
 ---
 
 ## 📁 ساختار پروژه
+
+```
 monthly-product-sales-forecast/
 │
-├── 📂 data/ # داده‌ها
-│ └── ModelAllData2.csv # فایل داده خام
+├── data/
+│   └── ModelAllData2.csv
 │
-├── 📂 models/ # مدل‌های ذخیره شده
-│ └── xgb_model.json # مدل XGBoost آموزش دیده
+├── models/
+│   └── xgb_model.json
 │
-├── 📂 reports/ # گزارش‌ها و خروجی‌ها
-│ ├── 📂 figures/ # نمودارها
-│ │ ├── feature_importance.png
-│ │ ├── actual_vs_predicted.png
-│ │ ├── residuals.png
-│ │ └── forecast_goods_*.png
-│ └── seasonal_forecast_results.csv # نتایج پیش‌بینی
+├── reports/
+│   ├── figures/
+│   │   ├── feature_importance.png
+│   │   ├── actual_vs_predicted.png
+│   │   ├── residuals.png
+│   │   └── forecast_goods_*.png
+│   └── seasonal_forecast_results.csv
 │
-├── 📂 src/ # کد منبع اصلی
-│ ├── init.py
-│ │
-│ ├── 📂 config/ # تنظیمات
-│ │ ├── init.py
-│ │ └── base_config.py # ثابت‌ها و مسیرها
-│ │
-│ ├── 📂 data/ # بارگذاری داده
-│ │ ├── init.py
-│ │ └── data_loader.py # توابع load و clean
-│ │
-│ ├── 📂 features/ # ساخت ویژگی‌ها
-│ │ ├── init.py
-│ │ └── feature_engineering.py # توابع ساخت feature
-│ │
-│ ├── 📂 models/ # مدل‌سازی
-│ │ ├── init.py
-│ │ ├── model_training.py # آموزش مدل
-│ │ ├── evaluation.py # ارزیابی مدل
-│ │ └── forecasting.py # پیش‌بینی
-│ │
-│ ├── 📂 utils/ # توابع کمکی
-│ │ ├── init.py
-│ │ ├── helpers.py # توابع عمومی
-│ │ ├── jalali_utils.py # تبدیل تاریخ
-│ │ └── auxiliary_comparison_chart.py
-│ │
-│ └── 📂 visualization/ # نمودارها
-│ ├── init.py
-│ ├── plots.py # توابع رسم نمودار
-│ ├── dashboard.py # داشبورد Streamlit
-│ └── interactive_plots.py # نمودار تعاملی
+├── src/
+│   ├── __init__.py
+│   │
+│   ├── config/
+│   │   ├── __init__.py
+│   │   └── base_config.py
+│   │
+│   ├── data/
+│   │   ├── __init__.py
+│   │   └── data_loader.py
+│   │
+│   ├── features/
+│   │   ├── __init__.py
+│   │   └── feature_engineering.py
+│   │
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── model_training.py
+│   │   ├── evaluation.py
+│   │   └── forecasting.py
+│   │
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── helpers.py
+│   │   ├── jalali_utils.py
+│   │   └── auxiliary_comparison_chart.py
+│   │
+│   └── visualization/
+│       ├── __init__.py
+│       ├── plots.py
+│       ├── dashboard.py
+│       └── interactive_plots.py
 │
-├── 📂 tests/ # تست‌ها
-│ └── test_pipeline.py
+├── tests/
+│   └── test_pipeline.py
 │
-├── 📂 notebooks/ # نوت‌بوک‌ها
-│ └── exploration.ipynb
+├── notebooks/
+│   └── exploration.ipynb
 │
-├── 📄 main.py # نقطه ورود اصلی
-├── 📄 app.py # داشبورد Streamlit
-├── 📄 view_forecasts.py # نمایشگر تعاملی
-├── 📄 requirements.txt # وابستگی‌ها
-└── 📄 README.md # مستندات
+├── main.py
+├── app.py
+├── view_forecasts.py
+├── requirements.txt
+└── README.md
+```
 
-text
+### توضیح پوشه‌ها
+
+| پوشه | توضیح |
+|------|-------|
+| `data/` | فایل‌های داده خام و پردازش شده |
+| `models/` | مدل‌های آموزش دیده (XGBoost) |
+| `reports/` | خروجی‌ها شامل نمودارها و نتایج پیش‌بینی |
+| `reports/figures/` | تصاویر نمودارها |
+| `src/` | کد منبع اصلی پروژه |
+| `src/config/` | تنظیمات و ثابت‌ها |
+| `src/data/` | توابع بارگذاری و پاکسازی داده |
+| `src/features/` | توابع Feature Engineering |
+| `src/models/` | توابع آموزش، ارزیابی و پیش‌بینی |
+| `src/utils/` | توابع کمکی عمومی |
+| `src/visualization/` | توابع رسم نمودار و داشبورد |
+| `tests/` | تست‌های خودکار |
+| `notebooks/` | نوت‌بوک‌های Jupyter |
+
+### فایل‌های اصلی
+
+| فایل | توضیح |
+|------|-------|
+| `main.py` | نقطه ورود اصلی - اجرای کامل Pipeline |
+| `app.py` | داشبورد تعاملی Streamlit |
+| `view_forecasts.py` | نمایشگر تعاملی با Matplotlib |
+| `requirements.txt` | لیست وابستگی‌های پروژه |
 
 
 ---
