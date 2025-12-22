@@ -1,96 +1,164 @@
-import os
-import pandas as pd
-from src.data.data_loader import load_data
-from src.features.feature_engineering import create_features
-from src.models.model_training import (train_model_random_forest_regressor, train_model_xgboost_regressor)
-from src.models.forecasting import forecast_future
-from src.utils.auxiliary_comparison_chart import plot_results_comparison
-from src.visualization.plots import plot_results
+"""
+Main entry point for the Monthly Product Sales Forecast pipeline.
+"""
+import warnings
 
-# Data file path
-data_path = "data/MonthlySales_TopGoods_500_ByCode_And_Name.csv"
-output_dir = "reports/figures"
-MAX_LAG = 24
+warnings.filterwarnings('ignore')
 
-# Load data
-print("در حال بارگذاری داده‌ها...")
-data = load_data(data_path)
-print(f"تعداد رکوردها: {len(data)}")
-print(f"تعداد کدهای یکتا: {data['Code'].nunique()}")
+from src.config.base_config import (
+    RAW_DATA_PATH,
+    MODEL_SAVE_PATH,
+    FIGURES_DIR,
+    FORECAST_RESULTS_PATH
+)
+from src.data.data_loader import load_and_clean_data
+from src.features.feature_engineering import build_features
+from src.models.model_training import (
+    train_test_split_temporal,
+    train_with_grid_search,
+    train_with_best_params,
+    save_model,
+    load_model
+)
+from src.models.evaluation import evaluate_model, get_predictions
+from src.models.forecasting import (
+    forecast_next_month,
+    save_forecast_results,
+    get_historical_with_predictions
+)
+from src.visualization.plots import (
+    plot_historical_and_predictions,
+    plot_feature_importance,
+    plot_actual_vs_predicted,
+    plot_residuals,
+    plot_sample_time_series
+)
+from src.utils.helpers import (
+    set_seed,
+    ensure_dir,
+    sample_goods_id,
+    print_section
+)
 
-# Feature Engineering
-print("در حال ایجاد ویژگی‌ها...")
-df, le = create_features(data, max_lag=MAX_LAG, rolling_windows=[3, 6, 9, 12])
-print(f"تعداد ویژگی‌ها: {len(df.columns)}")
 
-# Model training
-feature_cols = [col for col in df.columns if col not in ['MainQty', 'Name', 'Date', 'Code']]
-x_train = df[feature_cols]
-y_train = df['MainQty']
+def main(
+        data_path: str = None,
+        run_grid_search: bool = False,
+        save_plots: bool = True
+):
+    """
+    Run the complete sales forecasting pipeline.
 
-print(f"\nدر حال آموزش مدل با {len(x_train)} نمونه...")
-model = train_model_xgboost_regressor(x_train, y_train)
+    Parameters
+    ----------
+    data_path : str, optional
+        Path to raw data CSV file.
+    run_grid_search : bool
+        Whether to run full grid search (slow) or use best params.
+    save_plots : bool
+        Whether to save generated plots.
+    """
+    # Setup
+    set_seed(42)
+    ensure_dir(FIGURES_DIR)
 
-# Future prediction
-future_dates_df = pd.DataFrame({
-    'Year': [1404] * 8,
-    'Month': [5, 6, 7, 8, 9, 10, 11, 12]
-})
+    # ─────────────────────────────────────────────────────────
+    print_section("1. LOADING AND CLEANING DATA")
+    # ─────────────────────────────────────────────────────────
+    df = load_and_clean_data(data_path or RAW_DATA_PATH)
 
-print("در حال پیش‌بینی...")
-results_df = forecast_future(model, le, data, feature_cols, future_dates_df, max_lag=MAX_LAG)
+    # ─────────────────────────────────────────────────────────
+    print_section("2. FEATURE ENGINEERING")
+    # ─────────────────────────────────────────────────────────
+    monthly, feature_cols = build_features(df)
 
-# Save results
-if not results_df.empty:
-    df_predictions_pivoted = results_df.pivot_table(
-        index=['Code', 'Model'],
-        columns='Month',
-        values='Predicted_Sales',
-        fill_value=0
+    # ─────────────────────────────────────────────────────────
+    print_section("3. TRAIN/TEST SPLIT")
+    # ─────────────────────────────────────────────────────────
+    X_train, X_test, y_train, y_test, split_date = train_test_split_temporal(
+        monthly, feature_cols
     )
 
-    os.makedirs("reports", exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
+    # ─────────────────────────────────────────────────────────
+    print_section("4. MODEL TRAINING")
+    # ─────────────────────────────────────────────────────────
+    if run_grid_search:
+        model, best_params = train_with_grid_search(X_train, y_train, verbose=2)
+        print(f"Best parameters: {best_params}")
+    else:
+        model = train_with_best_params(X_train, y_train)
 
-    df_predictions_pivoted.to_csv("reports/seasonal_forecast_results.csv")
-    print(f"\n✓ نتایج در reports/seasonal_forecast_results.csv ذخیره شد")
+    # Save model
+    save_model(model, MODEL_SAVE_PATH)
 
-# Drawing a diagram
-predicted_codes = df_predictions_pivoted.index.get_level_values('Code').unique()
-total_codes = len(predicted_codes)
-print(f"✓ تعداد کدهای پیش‌بینی شده: {total_codes}")
+    # ─────────────────────────────────────────────────────────
+    print_section("5. MODEL EVALUATION")
+    # ─────────────────────────────────────────────────────────
+    metrics = evaluate_model(model, X_test, y_test)
+
+    # Predictions for visualization
+    y_pred = get_predictions(model, X_test)
+
+    # ─────────────────────────────────────────────────────────
+    print_section("6. FORECASTING")
+    # ─────────────────────────────────────────────────────────
+    forecast_df = forecast_next_month(model, monthly, feature_cols)
+    save_forecast_results(forecast_df)
+
+    # ─────────────────────────────────────────────────────────
+    print_section("7. VISUALIZATION")
+    # ─────────────────────────────────────────────────────────
+    # Plot feature importance
+    plot_feature_importance(
+        model, feature_cols, top_n=20,
+        save_path=FIGURES_DIR / "feature_importance.png" if save_plots else None
+    )
+
+    # Plot actual vs predicted
+    plot_actual_vs_predicted(
+        y_test, y_pred,
+        save_path=FIGURES_DIR / "actual_vs_predicted.png" if save_plots else None
+    )
+
+    # Plot residuals
+    plot_residuals(
+        y_test, y_pred,
+        save_path=FIGURES_DIR / "residuals.png" if save_plots else None
+    )
+
+    # Sample product visualization
+    sample_id = sample_goods_id(monthly, min_records=12)
+    print(f"\nSample GoodsID for visualization: {sample_id}")
+
+    plot_historical_and_predictions(
+        model, monthly, feature_cols, sample_id,
+        forecast_df=forecast_df,
+        split_date=split_date,
+        save_path=FIGURES_DIR / f"forecast_goods_{sample_id}.png" if save_plots else None
+    )
+
+    # ─────────────────────────────────────────────────────────
+    print_section("PIPELINE COMPLETE", char="✓")
+    # ─────────────────────────────────────────────────────────
+
+    print(f"""
+    Summary:
+    --------
+    • Products: {monthly['GoodsID'].nunique():,}
+    • Date Range: {monthly['date'].min().strftime('%Y-%m')} to {monthly['date'].max().strftime('%Y-%m')}
+    • Model Performance (Test Set):
+      - MAE:  {metrics['MAE']:.2f}
+      - RMSE: {metrics['RMSE']:.2f}
+      - R²:   {metrics['R2']:.3f}
+    • Forecast saved to: {FORECAST_RESULTS_PATH}
+    • Model saved to: {MODEL_SAVE_PATH}
+    """)
+
+    return model, monthly, feature_cols, forecast_df
 
 
-codes_to_plot = predicted_codes.tolist()
-
-print(f"\nدر حال رسم نمودار برای {len(codes_to_plot)} کد...")
-
-for i, code in enumerate(codes_to_plot, 1):
-    try:
-        plot_results(data, df_predictions_pivoted, [code], output_dir)
-        print(f"  [{i}/{len(codes_to_plot)}] نمودار کد {code} ذخیره شد")
-    except Exception as e:
-        print(f"  ⚠ خطا در رسم نمودار کد {code}: {e}")
-
-print(f"\n✓ نمودارها در پوشه {output_dir} ذخیره شدند")
-
-print("\n" + "=" * 50)
-print("خلاصه پیش‌بینی‌ها:")
-print("=" * 50)
-
-monthly_avg = results_df.groupby('Month')['Predicted_Sales'].agg(['mean', 'sum', 'count'])
-print("\nمیانگین فروش پیش‌بینی شده برای هر ماه:")
-print(monthly_avg.round(2))
-
-top_codes = results_df.groupby('Code')['Predicted_Sales'].sum().nlargest(5)
-print("\n5 کد با بیشترین مجموع پیش‌بینی فروش:")
-for code, total in top_codes.items():
-    product_name = data[data['Code'] == code]['Name'].iloc[0] if not data[data['Code'] == code].empty else "نامشخص"
-    print(f"  کد {code}: {total:,.0f} واحد - {product_name[:30]}")
-
-else:
-    print("⚠ هیچ پیش‌بینی انجام نشد!")
-
-print("\n" + "=" * 50)
-print("✓ پردازش با موفقیت به پایان رسید!")
-print("=" * 50)
+if __name__ == "__main__":
+    model, monthly, feature_cols, forecast_df = main(
+        run_grid_search=False,  # Set True for full hyperparameter search
+        save_plots=True
+    )

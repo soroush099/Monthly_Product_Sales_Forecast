@@ -1,14 +1,43 @@
-from jdatetime import datetime as jdatetime
-from datetime import datetime
+"""
+Jalali (Persian) calendar utilities.
+(Placeholder - add Jalali conversion functions if needed)
+"""
 
 
-def gregorian_to_jalali(year, month):
-    """Convert Gregorian date to Jalali"""
-    g_date = f"{year}-{month:02d}-01"
-    j_date = jdatetime.fromgregorian(date=datetime.strptime(g_date, "%Y-%m-%d").date())
-    return j_date.year, j_date.month
+# Example: You can use jdatetime library for Jalali conversions
+# import jdatetime
+
+def miladi_to_jalali(date):
+    """
+    Convert Gregorian date to Jalali date.
+
+    Parameters
+    ----------
+    date : datetime
+        Gregorian date.
+
+    Returns
+    -------
+    str
+        Jalali date string.
+    """
+    # Implement using jdatetime or similar library
+    pass
 
 
-def get_jalali_season(j_month):
-    """Get season number (1-4) for Jalali month"""
-    return (j_month - 1) // 3 + 1
+def jalali_to_miladi(date_str):
+    """
+    Convert Jalali date string to Gregorian date.
+
+    Parameters
+    ----------
+    date_str : str
+        Jalali date string.
+
+    Returns
+    -------
+    datetime
+        Gregorian date.
+    """
+    # Implement using jdatetime or similar library
+    pass

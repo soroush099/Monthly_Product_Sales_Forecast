@@ -1,116 +1,204 @@
-import numpy as np
+"""
+Model training module for XGBoost regressor.
+"""
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV, cross_validate
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import matplotlib.pyplot as plt
+import numpy as np
+from typing import Tuple, List, Dict, Any, Optional
+from xgboost import XGBRegressor
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
+
+from src.config.base_config import (
+    PARAM_GRID,
+    BEST_PARAMS,
+    RANDOM_STATE,
+    CV_SPLITS,
+    TEST_MONTHS,
+    MODEL_SAVE_PATH
+)
 
 
-def train_model_random_forest_regressor(x, y, n_splits=5):
-    # Enhanced RandomForest parameters
-    param_grid = {
-        'n_estimators': [100, 200, 300, 500],
-        'max_depth': [4, 6, 8, 10],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'max_features': ['sqrt', 'log2'],
-        'bootstrap': [True, False],
-        'max_samples': [0.7, 0.8, 0.9],
-        'criterion': ['squared_error', 'absolute_error', 'poisson'],
-        'min_impurity_decrease': [0.0, 0.1, 0.2]
-    }
+def train_test_split_temporal(
+        df: pd.DataFrame,
+        feature_cols: List[str],
+        target_col: str = 'MainQty',
+        test_months: int = None
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Timestamp]:
+    """
+    Split data into train and test sets chronologically.
 
-    # Initialize base model with better defaults
-    base_model = RandomForestRegressor(
-        random_state=42,
-        n_jobs=-1,
-        warm_start=True,
-        oob_score=True
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Feature-engineered dataframe with 'date' column.
+    feature_cols : list
+        List of feature column names.
+    target_col : str
+        Name of target column.
+    test_months : int, optional
+        Number of months to hold out for testing.
+
+    Returns
+    -------
+    tuple
+        (X_train, X_test, y_train, y_test, split_date)
+    """
+    if test_months is None:
+        test_months = TEST_MONTHS
+
+    X = df[feature_cols]
+    y = df[target_col]
+
+    split_date = df['date'].max() - pd.DateOffset(months=test_months)
+
+    train_idx = df['date'] <= split_date
+    test_idx = df['date'] > split_date
+
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    print(f"✅ Train/Test Split:")
+    print(f"   Split date: {split_date.strftime('%Y-%m-%d')}")
+    print(f"   Train size: {len(X_train):,}")
+    print(f"   Test size: {len(X_test):,}")
+
+    return X_train, X_test, y_train, y_test, split_date
+
+
+def train_with_grid_search(
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        param_grid: Dict[str, Any] = None,
+        cv_splits: int = None,
+        verbose: int = 1
+) -> Tuple[XGBRegressor, Dict[str, Any]]:
+    """
+    Train XGBoost model with GridSearchCV.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training features.
+    y_train : pd.Series
+        Training target.
+    param_grid : dict, optional
+        Hyperparameter grid.
+    cv_splits : int, optional
+        Number of cross-validation folds.
+    verbose : int
+        Verbosity level.
+
+    Returns
+    -------
+    tuple
+        (best_model, best_params)
+    """
+    if param_grid is None:
+        param_grid = PARAM_GRID
+    if cv_splits is None:
+        cv_splits = CV_SPLITS
+
+    tscv = TimeSeriesSplit(n_splits=cv_splits)
+
+    xgb_model = XGBRegressor(
+        objective='reg:squarederror',
+        random_state=RANDOM_STATE
     )
-    
-    # Initialize TimeSeriesSplit with more sophisticated settings
-    tscv = TimeSeriesSplit(
-        n_splits=n_splits,
-        gap=1,
-        test_size=6  # 6 months test size
-    )
-    
-    # Initialize enhanced GridSearchCV
+
     grid_search = GridSearchCV(
-        estimator=base_model,
+        estimator=xgb_model,
         param_grid=param_grid,
         cv=tscv,
-        scoring={
-            'rmse': 'neg_root_mean_squared_error',
-            'mae': 'neg_mean_absolute_error',
-            'r2': 'r2',
-            'mape': 'neg_mean_absolute_percentage_error'
-        },
-        refit='rmse',
+        scoring='neg_mean_absolute_error',
         n_jobs=-1,
-        verbose=2,
-        return_train_score=True
+        verbose=verbose
     )
-    
-    # Fit GridSearchCV
-    grid_search.fit(x, y)
-    
-    print("\n🎯 Best Parameters:")
-    for param, value in grid_search.best_params_.items():
-        print(f"  • {param}: {value}")
-    
-    print("\n📊 Cross-validation Scores:")
-    print(f"  • Best RMSE: {abs(grid_search.best_score_):.2f}")
-    
-    # Model configuration details
-    print("\n🌳 Random Forest Model Configuration:")
-    print("  • Number of features:", x.shape[1])
-    print("  • Number of samples:", x.shape[0])
-    print("  • Cross-validation folds:", n_splits)
-    print("  • Test size:", "6 months")
-    print("  • Gap size:", "1 month")
-    
-    # Add OOB score if available
-    if grid_search.best_estimator_.oob_score_:
-        print(f"📊 Out-of-Bag Score: {grid_search.best_estimator_.oob_score_:.3f}")
-    
-    # Get feature importance
-    importances = grid_search.best_estimator_.feature_importances_
-    std = np.std([tree.feature_importances_ for tree in 
-                  grid_search.best_estimator_.estimators_], axis=0)
-    
-    feature_importance = pd.DataFrame({
-        'feature': x.columns,
-        'importance': importances,
-        'std': std
-    }).sort_values('importance', ascending=False)
-    
-    print("\n🔍 Top 10 Most Important Features:")
-    for _, row in feature_importance.head(10).iterrows():
-        print(f"  • {row['feature']}: {row['importance']:.4f}")
-    
-    # Plot feature importance
-    plt.figure(figsize=(10, 6))
-    plt.bar(feature_importance.head(10)['feature'], feature_importance.head(10)['importance'])
-    plt.xticks(rotation=45, ha='right')
-    plt.title('Top 10 Feature Importance')
-    plt.tight_layout()
-    plt.savefig('reports/feature_importance.png')
-    plt.close()
-    
-    # Cross-validation with multiple metrics
-    cv_scores = cross_validate(
-        grid_search.best_estimator_,
-        x, y,
-        cv=tscv,
-        scoring=['neg_root_mean_squared_error', 'r2', 'neg_mean_absolute_error'],
-        return_train_score=True
-    )
-    
-    print("\n📈 Model Performance Metrics:")
-    print(f"  • Test RMSE: {abs(cv_scores['test_neg_root_mean_squared_error'].mean()):.2f} (±{cv_scores['test_neg_root_mean_squared_error'].std() * 2:.2f})")
-    print(f"  • Test MAE: {abs(cv_scores['test_neg_mean_absolute_error'].mean()):.2f} (±{cv_scores['test_neg_mean_absolute_error'].std() * 2:.2f})")
-    print(f"  • Test R²: {cv_scores['test_r2'].mean():.3f} (±{cv_scores['test_r2'].std() * 2:.3f})")
-    
-    return grid_search.best_estimator_
 
+    print("🔄 Starting GridSearchCV...")
+    grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_
+    best_params = grid_search.best_params_
+
+    print(f"✅ Best parameters: {best_params}")
+
+    return best_model, best_params
+
+
+def train_with_best_params(
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        params: Dict[str, Any] = None
+) -> XGBRegressor:
+    """
+    Train XGBoost model with pre-defined best parameters.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training features.
+    y_train : pd.Series
+        Training target.
+    params : dict, optional
+        Model parameters.
+
+    Returns
+    -------
+    XGBRegressor
+        Trained model.
+    """
+    if params is None:
+        params = BEST_PARAMS
+
+    model = XGBRegressor(
+        objective='reg:squarederror',
+        random_state=RANDOM_STATE,
+        **params
+    )
+
+    print("🔄 Training model with best parameters...")
+    model.fit(X_train, y_train)
+    print("✅ Model training complete")
+
+    return model
+
+
+def save_model(model: XGBRegressor, filepath: str = None) -> None:
+    """
+    Save trained model to file.
+
+    Parameters
+    ----------
+    model : XGBRegressor
+        Trained model.
+    filepath : str, optional
+        Path to save the model.
+    """
+    if filepath is None:
+        filepath = MODEL_SAVE_PATH
+
+    model.save_model(str(filepath))
+    print(f"✅ Model saved to {filepath}")
+
+
+def load_model(filepath: str = None) -> XGBRegressor:
+    """
+    Load trained model from file.
+
+    Parameters
+    ----------
+    filepath : str, optional
+        Path to the model file.
+
+    Returns
+    -------
+    XGBRegressor
+        Loaded model.
+    """
+    if filepath is None:
+        filepath = MODEL_SAVE_PATH
+
+    model = XGBRegressor()
+    model.load_model(str(filepath))
+    print(f"✅ Model loaded from {filepath}")
+
+    return model

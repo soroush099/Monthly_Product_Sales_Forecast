@@ -1,85 +1,249 @@
+"""
+Feature engineering module for sales forecasting.
+"""
 import pandas as pd
 import numpy as np
-import jdatetime
-from sklearn.preprocessing import LabelEncoder
-from ..utils.jalali_utils import gregorian_to_jalali, get_jalali_season
+from typing import List, Tuple
+
+from src.config.base_config import LAGS, ROLLING_WINDOWS
 
 
-def create_features(data: pd.DataFrame, max_lag=12, rolling_windows=None):
-    if rolling_windows is None:
-        rolling_windows = [3, 6, 9,  12]
-    df = data.copy()
+def add_date_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add basic date-based features.
 
-    # دیگه نیازی به تبدیل تاریخ به شمسی نیست.
-    def shamsi_to_gregorian(row):
-        return jdatetime.date(row['Year'], row['Month'], 1).togregorian()
-    df['Date'] = df.apply(shamsi_to_gregorian, axis=1)
-    df['Date'] = pd.to_datetime(df['Date'])
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe with 'Miladi' datetime column.
 
-    df['Quarter'] = df['Date'].dt.quarter
-    df['DayOfYear'] = df['Date'].dt.dayofyear
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with added date features.
+    """
+    df = df.copy()
+    df['year'] = df['Miladi'].dt.year
+    df['month'] = df['Miladi'].dt.month
+    df['quarter'] = df['Miladi'].dt.quarter
+    return df
 
-    for lag in range(1, max_lag + 1):
-        df[f'Sales_Lag_{lag}'] = df.groupby('Code')['MainQty'].shift(lag)
 
-    for window in rolling_windows:
-        df[f'Rolling_Mean_{window}'] = (
-            df.groupby('Code')['MainQty']
-            .shift(1)
-            .rolling(window=window, min_periods=1)
-            .mean()
-            .reset_index(level=0, drop=True)
+def aggregate_monthly(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate data to monthly level per GoodsID.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Daily-level dataframe.
+
+    Returns
+    -------
+    pd.DataFrame
+        Monthly aggregated dataframe.
+    """
+    monthly = (
+        df.groupby(['GoodsID', 'year', 'month', 'quarter'], as_index=False)
+        .agg({'MainQty': 'sum', 'Price': 'mean'})
+    )
+
+    # Create proper datetime for each month
+    monthly['date'] = pd.to_datetime(
+        monthly[['year', 'month']].assign(day=1)
+    )
+
+    print(f"✅ Aggregated to {len(monthly):,} monthly records")
+    return monthly
+
+
+def fill_missing_months(monthly: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill missing months with zeros to create continuous time series.
+
+    Parameters
+    ----------
+    monthly : pd.DataFrame
+        Monthly aggregated dataframe.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with all months filled.
+    """
+    min_date = monthly['date'].min()
+    max_date = monthly['date'].max()
+
+    full_months = pd.date_range(min_date, max_date, freq='MS')
+
+    # Cartesian product of GoodsID and months
+    full_index = pd.MultiIndex.from_product(
+        [monthly['GoodsID'].unique(), full_months],
+        names=['GoodsID', 'date']
+    )
+
+    monthly_full = (
+        monthly.set_index(['GoodsID', 'date'])
+        .reindex(full_index)
+        .reset_index()
+    )
+
+    # Fill missing values
+    monthly_full['MainQty'] = monthly_full['MainQty'].fillna(0)
+    monthly_full['Price'] = monthly_full['Price'].fillna(0)
+    monthly_full['year'] = monthly_full['date'].dt.year
+    monthly_full['month'] = monthly_full['date'].dt.month
+    monthly_full['quarter'] = monthly_full['date'].dt.quarter
+
+    print(f"✅ Filled missing months: {len(monthly_full):,} total records")
+    return monthly_full
+
+
+def create_lag_features(
+        df: pd.DataFrame,
+        lags: List[int] = None
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Create lag features for MainQty.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Monthly dataframe sorted by GoodsID and date.
+    lags : list of int, optional
+        List of lag periods. Defaults to config LAGS.
+
+    Returns
+    -------
+    tuple
+        (DataFrame with lag features, list of lag feature names)
+    """
+    if lags is None:
+        lags = LAGS
+
+    df = df.copy()
+    df = df.sort_values(['GoodsID', 'date'])
+
+    lag_features = []
+    for lag in lags:
+        col_name = f'lag_{lag}'
+        df[col_name] = df.groupby('GoodsID')['MainQty'].shift(lag)
+        lag_features.append(col_name)
+
+    print(f"✅ Created {len(lag_features)} lag features")
+    return df, lag_features
+
+
+def create_rolling_features(
+        df: pd.DataFrame,
+        windows: List[int] = None
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Create rolling mean features for MainQty.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Monthly dataframe with lag features.
+    windows : list of int, optional
+        List of rolling window sizes. Defaults to config ROLLING_WINDOWS.
+
+    Returns
+    -------
+    tuple
+        (DataFrame with rolling features, list of rolling feature names)
+    """
+    if windows is None:
+        windows = ROLLING_WINDOWS
+
+    df = df.copy()
+
+    rolling_features = []
+    for window in windows:
+        col_name = f'rolling_{window}'
+        df[col_name] = (
+            df.groupby('GoodsID')['MainQty']
+            .transform(lambda x: x.shift(1).rolling(window).mean())
         )
-        df[f'Rolling_Std_{window}'] = (
-            df.groupby('Code')['MainQty']
-            .shift(1)
-            .rolling(window=window, min_periods=1)
-            .std()
-            .reset_index(level=0, drop=True)
-        )
+        rolling_features.append(col_name)
 
-    df['Sales_LastYear'] = df.groupby('Code')['MainQty'].shift(12)
-
-    le = LabelEncoder()
-    df['Code_Encoded'] = le.fit_transform(df['Code'])
-
-    df.dropna(inplace=True)
-
-    return df, le
+    print(f"✅ Created {len(rolling_features)} rolling features")
+    return df, rolling_features
 
 
-def create_features_for_prediction(history_data, code, le, future_year, future_month,
-                                   max_lag=24, rolling_windows=None):
+def build_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Full feature engineering pipeline.
 
-    if rolling_windows is None:
-        rolling_windows = [3, 6, 12]
-    future_date = jdatetime.date(int(future_year), int(future_month), 1).togregorian()
-    future_date = pd.to_datetime(future_date)
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Cleaned raw dataframe.
 
-    features = {
-        'Code_Encoded': le.transform([code])[0],
-        'Year': future_year,
-        'Month': future_month,
-        'Quarter': future_date.quarter,
-        'DayOfYear': future_date.dayofyear
-    }
+    Returns
+    -------
+    tuple
+        (Feature-engineered monthly dataframe, list of all feature column names)
+    """
+    # Add date features
+    df = add_date_features(df)
 
-    for lag in range(1, max_lag + 1):
-        if len(history_data) >= lag:
-            features[f'Sales_Lag_{lag}'] = history_data['MainQty'].iloc[-lag]
-        else:
-            features[f'Sales_Lag_{lag}'] = 0
+    # Aggregate to monthly
+    monthly = aggregate_monthly(df)
 
-    for window in rolling_windows:
-        if len(history_data) >= window:
-            rolling_data = history_data['MainQty'].tail(window)
-            features[f'Rolling_Mean_{window}'] = rolling_data.mean()
-            rolling_std = rolling_data.std()
-            features[f'Rolling_Std_{window}'] = rolling_std if not np.isnan(rolling_std) else 0
-        else:
-            features[f'Rolling_Mean_{window}'] = history_data['MainQty'].mean() if not history_data.empty else 0
-            features[f'Rolling_Std_{window}'] = 0
+    # Fill missing months
+    monthly = fill_missing_months(monthly)
 
-    features['Sales_LastYear'] = history_data['MainQty'].iloc[-12] if len(history_data) >= 12 else 0
+    # Create lag features
+    monthly, lag_features = create_lag_features(monthly)
 
-    return features
+    # Create rolling features
+    monthly, rolling_features = create_rolling_features(monthly)
+
+    # Drop rows with all null features
+    monthly = monthly.dropna(
+        how='all',
+        subset=lag_features + rolling_features
+    ).reset_index(drop=True)
+
+    # Compile all feature columns
+    all_features = (
+            lag_features +
+            rolling_features +
+            ['Price', 'year', 'month', 'quarter']
+    )
+
+    print(f"✅ Feature engineering complete: {len(monthly):,} rows, {len(all_features)} features")
+    print(f"   Unique GoodsIDs: {monthly['GoodsID'].nunique():,}")
+
+    return monthly, all_features
+
+
+def get_feature_columns(
+        lags: List[int] = None,
+        windows: List[int] = None
+) -> List[str]:
+    """
+    Get list of all feature column names.
+
+    Parameters
+    ----------
+    lags : list of int, optional
+        List of lag periods.
+    windows : list of int, optional
+        List of rolling window sizes.
+
+    Returns
+    -------
+    list
+        List of feature column names.
+    """
+    if lags is None:
+        lags = LAGS
+    if windows is None:
+        windows = ROLLING_WINDOWS
+
+    lag_features = [f'lag_{lag}' for lag in lags]
+    rolling_features = [f'rolling_{w}' for w in windows]
+
+    return lag_features + rolling_features + ['Price', 'year', 'month', 'quarter']
