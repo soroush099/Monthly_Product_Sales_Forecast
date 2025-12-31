@@ -625,15 +625,15 @@ colsample_bytree: 1.0
 
 ### معیارهای ارزیابی
 
-**MAE (Mean Absolute Error): 3.82**
+**MAE (Mean Absolute Error): 26.20**
 
 میانگین خطای مطلق
 
-**RMSE (Root Mean Squared Error): 10.62**
+**RMSE (Root Mean Squared Error): 85.83**
 
 ریشه میانگین مربعات خطا
 
-**R2 (R-squared): 0.790**
+**R2 (R-squared): 0.942**
 
 ضریب تعیین - 79% واریانس توضیح داده شده
 
