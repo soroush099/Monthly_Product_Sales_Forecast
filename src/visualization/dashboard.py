@@ -1,26 +1,20 @@
 """
 Interactive Streamlit Dashboard for Sales Forecasting.
+Fixed Navigation Logic & Removed duplicate page config.
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import io
 import sys
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from src.config.base_config import MODEL_SAVE_PATH, FIGURES_DIR
-from src.models.model_training import load_model
-from src.utils.helpers import ensure_dir
-
-
-def load_data_and_model():
-    """Load model and data from session or disk."""
-    if 'model' not in st.session_state:
-        st.session_state.model = load_model(MODEL_SAVE_PATH)
-    return st.session_state.model
+# from src.config.base_config import MODEL_SAVE_PATH
+# from src.models.model_training import load_model
 
 
 def plot_product_forecast(
@@ -31,7 +25,7 @@ def plot_product_forecast(
         forecast_df: pd.DataFrame = None,
         split_date: pd.Timestamp = None
 ):
-    """Create forecast plot for a specific product."""
+    """Create forecast plot using Matplotlib."""
 
     # Filter product data
     product_df = monthly[monthly['GoodsID'] == goods_id].copy()
@@ -39,9 +33,9 @@ def plot_product_forecast(
 
     if len(product_df) == 0:
         st.warning(f"⚠️ No data found for GoodsID {goods_id}")
-        return None
+        return None, None
 
-    # Predict
+    # Predict using the model passed from main app
     product_df['predicted'] = model.predict(product_df[feature_cols])
 
     # Create figure
@@ -55,7 +49,7 @@ def plot_product_forecast(
         marker='o',
         color='steelblue',
         linewidth=2,
-        markersize=6
+        markersize=4
     )
 
     # Model predictions
@@ -120,96 +114,106 @@ def calculate_product_metrics(product_df: pd.DataFrame) -> dict:
     }
 
 
+def fig_to_bytes(fig):
+    """Convert matplotlib figure to bytes for download."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def run_dashboard(monthly: pd.DataFrame, feature_cols: list, forecast_df: pd.DataFrame, split_date):
-    """Run the Streamlit dashboard."""
+    """
+    Main dashboard function.
+    Note: Model is loaded in app.py and passed via session_state implicitly
+    OR we can just instantiate a predictor here if needed.
+    Ideally, app.py should pass the 'model' object, but to keep your structure:
+    """
 
-    st.set_page_config(
-        page_title="Sales Forecast Dashboard",
-        page_icon="📊",
-        layout="wide"
-    )
+    # 1. بازیابی مدل از Session State (چون در app.py لود شده)
+    # اگر مدل وجود نداشت (نباید اتفاق بیفتد)، ارور می‌دهیم
+    if 'model' not in st.session_state:
+        # Fallback logic: Try to get model from the passed function arguments if possible?
+        # But since run_dashboard signature is fixed, we assume app.py put model in session_state.
+        # Let's check if we can import load_model here as fallback
+        try:
+            from src.config.base_config import MODEL_SAVE_PATH
+            from src.models.model_training import load_model
+            model = load_model(MODEL_SAVE_PATH)
+        except:
+            st.error("Model not found in session state or disk!")
+            return
+    else:
+        # اگر app.py مدل را در session_state نگذاشته باشد، باید آنجا اصلاح شود.
+        # اما بیایید فرض کنیم مدل را نداریم و باید لود کنیم:
+        # راه حل بهتر: app.py مدل را به run_dashboard پاس بدهد.
+        # اما چون سیگنیچر تابع شما فیکس است، اینجا لود می‌کنیم:
+        from src.config.base_config import MODEL_SAVE_PATH
+        from src.models.model_training import load_model
+        model = load_model(MODEL_SAVE_PATH)
 
-    st.title("📊 Sales Forecast Dashboard")
     st.markdown("---")
-
-    # Load model
-    model = load_data_and_model()
 
     # Sidebar for product selection
     st.sidebar.header("🔍 Product Selection")
 
-    # Get valid products (with enough data)
-    valid_products = monthly[~monthly['lag_8'].isna()]['GoodsID'].unique()
+    # Get valid products
+    valid_products = monthly['GoodsID'].unique()
     valid_products = sorted(valid_products)
+    total_products = len(valid_products)
 
-    # Product selection methods
-    selection_method = st.sidebar.radio(
-        "Selection Method:",
-        ["Dropdown", "Search", "Random"]
+    # --- اصلاح منطق دکمه‌ها با Session State ---
+    if 'selected_idx' not in st.session_state:
+        st.session_state.selected_idx = 0
+
+    # Navigation buttons logic
+    col_prev, col_next = st.sidebar.columns(2)
+
+    with col_prev:
+        if st.button("⬅️ Previous"):
+            st.session_state.selected_idx = (st.session_state.selected_idx - 1) % total_products
+            st.rerun()
+
+    with col_next:
+        if st.button("Next ➡️"):
+            st.session_state.selected_idx = (st.session_state.selected_idx + 1) % total_products
+            st.rerun()
+
+    # Get current product based on index
+    current_idx = st.session_state.selected_idx
+    selected_goods_id = valid_products[current_idx]
+
+    # نمایش دراپ‌داون (که با دکمه‌ها سینک باشد)
+    # اگر کاربر از دراپ‌داون انتخاب کرد، ایندکس آپدیت شود
+    selected_from_dropdown = st.sidebar.selectbox(
+        "Jump to Product:",
+        options=valid_products,
+        index=current_idx,
+        key="dropdown_selector"
     )
 
-    if selection_method == "Dropdown":
-        selected_goods_id = st.sidebar.selectbox(
-            "Select GoodsID:",
-            options=valid_products,
-            index=0
-        )
-
-    elif selection_method == "Search":
-        search_id = st.sidebar.number_input(
-            "Enter GoodsID:",
-            min_value=int(min(valid_products)),
-            max_value=int(max(valid_products)),
-            value=int(valid_products[0])
-        )
-        if search_id in valid_products:
-            selected_goods_id = search_id
-        else:
-            st.sidebar.warning(f"GoodsID {search_id} not found!")
-            selected_goods_id = valid_products[0]
-
-    else:  # Random
-        if st.sidebar.button("🎲 Random Product"):
-            st.session_state.random_id = np.random.choice(valid_products)
-
-        selected_goods_id = st.session_state.get('random_id', valid_products[0])
+    # اگر انتخاب دراپ‌داون با ایندکس فعلی فرق داشت، یعنی کاربر دستی عوض کرده
+    if selected_from_dropdown != selected_goods_id:
+        st.session_state.selected_idx = list(valid_products).index(selected_from_dropdown)
+        st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.info(f"📦 Total Products: {len(valid_products):,}")
-
-    # Navigation buttons
-    st.sidebar.markdown("### ⬅️➡️ Navigation")
-    col1, col2 = st.sidebar.columns(2)
-
-    current_idx = list(valid_products).index(selected_goods_id)
-
-    with col1:
-        if st.button("⬅️ Previous"):
-            new_idx = (current_idx - 1) % len(valid_products)
-            selected_goods_id = valid_products[new_idx]
-            st.rerun()
-
-    with col2:
-        if st.button("Next ➡️"):
-            new_idx = (current_idx + 1) % len(valid_products)
-            selected_goods_id = valid_products[new_idx]
-            st.rerun()
+    st.sidebar.info(f"📦 Total Products: {total_products:,}")
+    st.sidebar.text(f"Current Index: {current_idx + 1}")
 
     # Main content
     st.header(f"📦 Product: {selected_goods_id}")
 
     # Create plot
-    result = plot_product_forecast(
+    fig, product_df = plot_product_forecast(
         model, monthly, feature_cols,
         selected_goods_id, forecast_df, split_date
     )
 
-    if result is not None:
-        fig, product_df = result
-
+    if fig is not None:
         # Display plot
         st.pyplot(fig)
-        plt.close(fig)
+        plt.close(fig) # بستن فیگور برای جلوگیری از مصرف حافظه
 
         # Metrics
         st.markdown("---")
@@ -218,21 +222,14 @@ def run_dashboard(monthly: pd.DataFrame, feature_cols: list, forecast_df: pd.Dat
         metrics = calculate_product_metrics(product_df)
 
         col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("MAE", f"{metrics['MAE']:.2f}")
-        with col2:
-            st.metric("RMSE", f"{metrics['RMSE']:.2f}")
-        with col3:
-            st.metric("R²", f"{metrics['R²']:.3f}")
-        with col4:
-            st.metric("Data Points", f"{metrics['Data Points']}")
+        with col1: st.metric("MAE", f"{metrics['MAE']:.2f}")
+        with col2: st.metric("RMSE", f"{metrics['RMSE']:.2f}")
+        with col3: st.metric("R²", f"{metrics['R²']:.3f}")
+        with col4: st.metric("Data Points", f"{metrics['Data Points']}")
 
         col5, col6 = st.columns(2)
-        with col5:
-            st.metric("Total Sales", f"{metrics['Total Sales']:,.0f}")
-        with col6:
-            st.metric("Avg Monthly", f"{metrics['Avg Monthly Sales']:.1f}")
+        with col5: st.metric("Total Sales", f"{metrics['Total Sales']:,.0f}")
+        with col6: st.metric("Avg Monthly", f"{metrics['Avg Monthly Sales']:.1f}")
 
         # Next month forecast
         st.markdown("---")
@@ -264,17 +261,3 @@ def run_dashboard(monthly: pd.DataFrame, feature_cols: list, forecast_df: pd.Dat
             file_name=f"forecast_goods_{selected_goods_id}.png",
             mime="image/png"
         )
-
-
-def fig_to_bytes(fig):
-    """Convert matplotlib figure to bytes for download."""
-    import io
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    return buf.getvalue()
-
-
-# For running directly
-if __name__ == "__main__":
-    st.error("Please run this from the main app entry point!")

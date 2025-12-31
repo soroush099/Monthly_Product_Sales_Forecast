@@ -2,6 +2,8 @@
 Main entry point for the Monthly Product Sales Forecast pipeline.
 """
 import warnings
+import os
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 
@@ -14,24 +16,20 @@ from src.config.base_config import (
 from src.data.data_loader import load_and_clean_data
 from src.features.feature_engineering import build_features
 from src.models.model_training import (
-    train_test_split_temporal,
-    train_with_grid_search,
-    train_with_best_params,
+    train_model,
     save_model,
     load_model
 )
 from src.models.evaluation import evaluate_model, get_predictions
 from src.models.forecasting import (
     forecast_next_month,
-    save_forecast_results,
-    get_historical_with_predictions
+    save_forecast_results
 )
 from src.visualization.plots import (
     plot_historical_and_predictions,
     plot_feature_importance,
     plot_actual_vs_predicted,
-    plot_residuals,
-    plot_sample_time_series
+    plot_residuals
 )
 from src.utils.helpers import (
     set_seed,
@@ -41,9 +39,81 @@ from src.utils.helpers import (
 )
 
 
+def train_test_split_temporal(monthly, feature_cols, test_months=2):
+    """
+    Split data temporally for time series.
+
+    Parameters
+    ----------
+    monthly : DataFrame
+        Monthly aggregated data
+    feature_cols : list
+        Feature column names
+    test_months : int
+        Number of months to use for testing
+
+    Returns
+    -------
+    tuple : X_train, X_test, y_train, y_test, split_date
+    """
+    # Calculate split date
+    split_date = monthly['date'].max() - pd.DateOffset(months=test_months)
+
+    # Split data
+    train_df = monthly[monthly['date'] <= split_date].dropna(subset=feature_cols)
+    test_df = monthly[monthly['date'] > split_date].dropna(subset=feature_cols)
+
+    X_train = train_df[feature_cols]
+    X_test = test_df[feature_cols]
+    y_train = train_df['MainQty']
+    y_test = test_df['MainQty']
+
+    print(f"Split Date: {split_date.strftime('%Y-%m')}")
+    print(f"Train: {len(X_train):,} records | Test: {len(X_test):,} records")
+
+    return X_train, X_test, y_train, y_test, split_date
+
+
+def get_model_smart(X_train, y_train, feature_cols):
+    """
+    Load model if exists and matches features.
+    If not exists OR mismatch -> Train new model.
+    """
+    model = None
+    retrain_needed = False
+
+    # 1. Check if model file exists
+    if not os.path.exists(MODEL_SAVE_PATH):
+        print("⚠️ Model file not found. Starting initial training...")
+        retrain_needed = True
+    else:
+        # 2. Try to load and check feature compatibility
+        try:
+            model = load_model(MODEL_SAVE_PATH)
+            booster_features = model.get_booster().feature_names
+
+            if booster_features != list(feature_cols):
+                print("⚠️ Feature mismatch detected (Code changed). Retraining...")
+                retrain_needed = True
+            else:
+                print("✅ Model loaded successfully.")
+
+        except Exception as e:
+            print(f"⚠️ Error loading model: {e}. Retraining...")
+            retrain_needed = True
+
+    # 3. Train if needed
+    if retrain_needed:
+        print("⚙️ Training optimized XGBoost model...")
+        model = train_model(X_train, y_train)
+        save_model(model, MODEL_SAVE_PATH)
+        print("✅ Model trained and saved!")
+
+    return model
+
+
 def main(
         data_path: str = None,
-        run_grid_search: bool = False,
         save_plots: bool = True
 ):
     """
@@ -53,8 +123,6 @@ def main(
     ----------
     data_path : str, optional
         Path to raw data CSV file.
-    run_grid_search : bool
-        Whether to run full grid search (slow) or use best params.
     save_plots : bool
         Whether to save generated plots.
     """
@@ -82,14 +150,7 @@ def main(
     # ─────────────────────────────────────────────────────────
     print_section("4. MODEL TRAINING")
     # ─────────────────────────────────────────────────────────
-    if run_grid_search:
-        model, best_params = train_with_grid_search(X_train, y_train, verbose=2)
-        print(f"Best parameters: {best_params}")
-    else:
-        model = train_with_best_params(X_train, y_train)
-
-    # Save model
-    save_model(model, MODEL_SAVE_PATH)
+    model = get_model_smart(X_train, y_train, feature_cols)
 
     # ─────────────────────────────────────────────────────────
     print_section("5. MODEL EVALUATION")
@@ -150,6 +211,7 @@ def main(
       - MAE:  {metrics['MAE']:.2f}
       - RMSE: {metrics['RMSE']:.2f}
       - R²:   {metrics['R2']:.3f}
+      - MAPE: {metrics['MAPE']:.2f}%
     • Forecast saved to: {FORECAST_RESULTS_PATH}
     • Model saved to: {MODEL_SAVE_PATH}
     """)
@@ -159,6 +221,5 @@ def main(
 
 if __name__ == "__main__":
     model, monthly, feature_cols, forecast_df = main(
-        run_grid_search=False,  # Set True for full hyperparameter search
         save_plots=True
     )

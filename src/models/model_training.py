@@ -1,203 +1,101 @@
-"""
-Model training module for XGBoost regressor.
-"""
 import pandas as pd
 import numpy as np
-from typing import Tuple, List, Dict, Any, Optional
-from xgboost import XGBRegressor
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
+import os
+import optuna
+import xgboost as xgb
+from typing import Dict, Any
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_squared_error
 
 from src.config.base_config import (
-    PARAM_GRID,
-    BEST_PARAMS,
+    MODEL_SAVE_PATH,
     RANDOM_STATE,
-    CV_SPLITS,
-    TEST_MONTHS,
-    MODEL_SAVE_PATH
+    STATIC_PARAMS
 )
 
 
-def train_test_split_temporal(
-        df: pd.DataFrame,
-        feature_cols: List[str],
-        target_col: str = 'MainQty',
-        test_months: int = None
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Timestamp]:
-    """
-    Split data into train and test sets chronologically.
+def optimize_hyperparameters(x: pd.DataFrame, y: pd.Series, n_trials: int = 20) -> Dict[str, Any]:
+    print(f"🧠 Starting Hyperparameter Optimization ({n_trials} trials)...")
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Feature-engineered dataframe with 'date' column.
-    feature_cols : list
-        List of feature column names.
-    target_col : str
-        Name of target column.
-    test_months : int, optional
-        Number of months to hold out for testing.
+    # === SAFETY CHECK: CLEAN DATA BEFORE OPTIMIZATION ===
+    # تبدیل تمام بی‌نهایت‌ها به NaN و سپس پر کردن با صفر
+    x = x.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    Returns
-    -------
-    tuple
-        (X_train, X_test, y_train, y_test, split_date)
-    """
-    if test_months is None:
-        test_months = TEST_MONTHS
+    # ====================================================
 
-    X = df[feature_cols]
-    y = df[target_col]
+    def objective(trial):
+        param_suggestions = {
+            'tweedie_variance_power': trial.suggest_float('tweedie_variance_power', 1.1, 1.9),
+            'n_estimators': trial.suggest_int('n_estimators', 500, 2000, step=100),
+            'max_depth': trial.suggest_int('max_depth', 3, 10),
+            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+            'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+            'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+            'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+            'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+        }
 
-    split_date = df['date'].max() - pd.DateOffset(months=test_months)
+        params = {**STATIC_PARAMS, **param_suggestions}
+        tscv = TimeSeriesSplit(n_splits=3)
+        scores = []
 
-    train_idx = df['date'] <= split_date
-    test_idx = df['date'] > split_date
+        for train_idx, val_idx in tscv.split(x):
+            x_tr, x_val = x.iloc[train_idx], x.iloc[val_idx]
+            y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-    X_train, X_test = X[train_idx], X[test_idx]
-    y_train, y_test = y[train_idx], y[test_idx]
+            model = xgb.XGBRegressor(**params)
+            model.fit(x_tr, y_tr, verbose=False)
 
-    print(f"✅ Train/Test Split:")
-    print(f"   Split date: {split_date.strftime('%Y-%m-%d')}")
-    print(f"   Train size: {len(X_train):,}")
-    print(f"   Test size: {len(X_test):,}")
+            preds = model.predict(x_val)
+            rmse = np.sqrt(mean_squared_error(y_val, preds))
+            scores.append(rmse)
 
-    return X_train, X_test, y_train, y_test, split_date
+        return np.mean(scores)
+
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=n_trials)
+
+    return study.best_params
 
 
-def train_with_grid_search(
-        X_train: pd.DataFrame,
-        y_train: pd.Series,
-        param_grid: Dict[str, Any] = None,
-        cv_splits: int = None,
-        verbose: int = 1
-) -> Tuple[XGBRegressor, Dict[str, Any]]:
-    """
-    Train XGBoost model with GridSearchCV.
+def train_model(x: pd.DataFrame, y: pd.Series) -> xgb.XGBRegressor:
+    # === SAFETY CHECK ===
+    x = x.replace([np.inf, -np.inf], np.nan).fillna(0)
+    # ====================
 
-    Parameters
-    ----------
-    X_train : pd.DataFrame
-        Training features.
-    y_train : pd.Series
-        Training target.
-    param_grid : dict, optional
-        Hyperparameter grid.
-    cv_splits : int, optional
-        Number of cross-validation folds.
-    verbose : int
-        Verbosity level.
+    # مرحله 1: هایپر تیونینگ
+    best_tuned_params = optimize_hyperparameters(x, y, n_trials=20)
 
-    Returns
-    -------
-    tuple
-        (best_model, best_params)
-    """
-    if param_grid is None:
-        param_grid = PARAM_GRID
-    if cv_splits is None:
-        cv_splits = CV_SPLITS
+    final_params = {**STATIC_PARAMS, **best_tuned_params}
 
-    tscv = TimeSeriesSplit(n_splits=cv_splits)
+    print("🔄 Training Final Model with Optimized Parameters...")
 
-    xgb_model = XGBRegressor(
-        objective='reg:squarederror',
-        random_state=RANDOM_STATE
-    )
+    # مرحله 2: ساخت مدل نهایی
+    model = xgb.XGBRegressor(**final_params)
+    model.fit(x, y)
 
-    grid_search = GridSearchCV(
-        estimator=xgb_model,
-        param_grid=param_grid,
-        cv=tscv,
-        scoring='neg_mean_absolute_error',
-        n_jobs=-1,
-        verbose=verbose
-    )
-
-    print("🔄 Starting GridSearchCV...")
-    grid_search.fit(X_train, y_train)
-
-    best_model = grid_search.best_estimator_
-    best_params = grid_search.best_params_
-
-    print(f"✅ Best parameters: {best_params}")
-
-    return best_model, best_params
-
-
-def train_with_best_params(
-        X_train: pd.DataFrame,
-        y_train: pd.Series,
-        params: Dict[str, Any] = None
-) -> XGBRegressor:
-    """
-    Train XGBoost model with pre-defined best parameters.
-
-    Parameters
-    ----------
-    X_train : pd.DataFrame
-        Training features.
-    y_train : pd.Series
-        Training target.
-    params : dict, optional
-        Model parameters.
-
-    Returns
-    -------
-    XGBRegressor
-        Trained model.
-    """
-    if params is None:
-        params = BEST_PARAMS
-
-    model = XGBRegressor(
-        objective='reg:squarederror',
-        random_state=RANDOM_STATE,
-        **params
-    )
-
-    print("🔄 Training model with best parameters...")
-    model.fit(X_train, y_train)
-    print("✅ Model training complete")
-
+    save_model(model)
     return model
 
 
-def save_model(model: XGBRegressor, filepath: str = None) -> None:
-    """
-    Save trained model to file.
-
-    Parameters
-    ----------
-    model : XGBRegressor
-        Trained model.
-    filepath : str, optional
-        Path to save the model.
-    """
+def save_model(model: xgb.XGBRegressor, filepath: str = None) -> None:
     if filepath is None:
         filepath = MODEL_SAVE_PATH
 
+    os.makedirs(os.path.dirname(str(filepath)), exist_ok=True)
     model.save_model(str(filepath))
     print(f"✅ Model saved to {filepath}")
 
 
-def load_model(filepath: str = None) -> XGBRegressor:
-    """
-    Load trained model from file.
-
-    Parameters
-    ----------
-    filepath : str, optional
-        Path to the model file.
-
-    Returns
-    -------
-    XGBRegressor
-        Loaded model.
-    """
+def load_model(filepath: str = None) -> xgb.XGBRegressor:
     if filepath is None:
         filepath = MODEL_SAVE_PATH
 
-    model = XGBRegressor()
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Model file not found at {filepath}")
+
+    model = xgb.XGBRegressor()
     model.load_model(str(filepath))
     print(f"✅ Model loaded from {filepath}")
 
